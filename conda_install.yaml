@@ -1,0 +1,100 @@
+- name: Test the Anaconda role for CentOS and Ubuntu
+  hosts: all
+  become: true
+
+  tasks:
+    - name: update chache 
+      shell: sudo apt update 
+    - name: Install required packages
+      apt: 
+        name: bzip2 
+        state: present
+
+    - name: Check if Anaconda is already installed
+      stat:
+        path: "/tmp/Anaconda3"
+      register: check_anaconda_install_path
+
+    - name: Download Anaconda
+      shell: wget https://repo.continuum.io/archive/Anaconda3-2024.06-1-Linux-x86_64.sh -O /tmp/Anaconda3.sh
+      ignore_errors: true
+
+    - name: Install Anaconda
+      become: true
+      shell: |
+        rm -rf /opt/anaconda3
+        bash /tmp/Anaconda3.sh -b -p /opt/anaconda3
+      args:
+        executable: /bin/bash
+      register: anaconda_install
+
+    - name: Add Anaconda to the system path in /etc/profile
+      lineinfile:
+        path: /etc/profile
+        regexp: ^export PATH=.*anaconda.*
+        line: "export PATH=\"/opt/anaconda3/bin:$PATH\""
+        backup: true
+    - name: Install pip3
+      apt:
+        name: python3-pip
+        state: present
+
+    - name: Source anaconda and initialize conda
+      shell: |
+        source /opt/anaconda3/bin/activate
+        conda init
+      args:
+        executable: /bin/bash
+
+    - name: Create codecarbon env
+      shell: |
+        source /opt/anaconda3/bin/activate
+        conda create --name codecarbon -y
+      args:
+        executable: /bin/bash
+
+    - name: Reboot machine
+      reboot:
+        reboot_timeout: 600
+
+    - name: Install codecarbon using pip
+      shell: pip3 install codecarbon --break-system-packages
+
+    - name: Install codecarbon using conda
+      shell: |
+        source /opt/anaconda3/bin/activate
+        conda install -c conda-forge codecarbon -y
+      args:
+        executable: /bin/bash
+
+    - name: Initialize codecarbon
+      shell: |
+        source /opt/anaconda3/bin/activate
+        codecarbon init
+      args:
+        executable: /bin/bash
+
+    - name: Start CodeCarbon monitor in background
+      shell: codecarbon monitor & echo $! > codecarbon_pid.txt
+      async: 60  
+      poll: 0
+
+    - name: Wait for desired monitoring duration
+      pause:
+        seconds: 30  
+
+    - name: Send SIGINT to CodeCarbon monitor process
+      shell: kill -SIGINT $(cat codecarbon_pid.txt)
+      register: kill_result
+      ignore_errors: yes
+
+    - name: Wait for emissions.csv
+      pause:
+        seconds: 15
+
+    - name: Fetch emissions.csv file
+      fetch:
+        src: /home/ubuntu/emissions.csv
+        dest: ./codecarbon.csv
+        flat: yes
+
